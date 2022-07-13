@@ -29,6 +29,8 @@ setup(
     },
     install_requires=[
         "ampel-ztf>=0.8.0a4,<0.9",
+        "astropy",
+        "appdirs",
         "requests",
         "backoff",
         "numpy",

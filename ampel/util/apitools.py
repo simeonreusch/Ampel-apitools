@@ -2,11 +2,13 @@
 # Author: Simeon Reusch (simeon.reusch@desy.de)
 # License: BSD-3-Clause
 
-import io, os, logging, time
+import io, os, logging, time, json
 import requests
 import backoff
+from appdirs import AppDirs
 import numpy as np
 import pandas as pd
+from astropy.time import Time
 from tqdm import tqdm
 from ampel.ztf.t0.load.ZTFArchiveAlertLoader import ZTFArchiveAlertLoader
 
@@ -23,24 +25,74 @@ class Stream(object):
 
     def __init__(self):
         super(Stream, self).__init__()
+        self.create_dir_for_token()
 
-    def create_stream_from_names(
+    def create_dir_for_token(self):
+        """
+        Create cache dir for token
+        """
+
+        cache_dir = AppDirs("ampel-apitools").user_cache_dir
+        if not os.path.exists(cache_dir):
+            os.makedirs(cache_dir)
+
+        self.cache_dir = cache_dir
+
+        return cache_dir
+
+    def create_stream_from_objectIds(
         self,
         token: str = auth_token,
         objectIds: list = None,
+        candidate_dict: dict = {},
+    ) -> None:
+        """
+        Initiate a epoch based stream query
+        """
+        logger.debug(f"Creating a stream from objecIds: {objectIds}")
+
+        query = {
+            "objectId": objectIds,
+            "candidate": candidate_dict,
+        }
+        logger.debug(f"Query: {query}")
+
+        self.generic_stream(query=query)
+
+    def create_stream_from_epoch(
+        self,
+        token: str = auth_token,
+        date_start: str = "2014-10-10",
+        date_end: str = "2022-06-28",
         candidate_dict: dict = {},
     ) -> str:
         """
         Initiate a epoch based stream query
         """
+        t_min_jd = Time(date_start).jd
+        t_max_jd = Time(date_end).jd
+
+        logger.debug(
+            f"Generating query from {Time(t_min_jd, format='jd').iso} to {Time(t_max_jd, format='jd').iso}"
+        )
+
         query = {
-            "objectId": objectIds,
+            "jd": {
+                "$gt": t_min_jd,
+                "$lt": t_max_jd,
+            },
             "candidate": candidate_dict,
         }
 
+        logger.debug(f"Query: {query}")
+
+        self.generic_stream(query=query)
+
+    def generic_stream(self, query: dict):
+
         header = {"Authorization": "bearer " + auth_token}
 
-        response = requests.post(endpoint_query, json=query, headers=header)
+        response = requests.post(url=endpoint_query, json=query, headers=header)
 
         if not response.ok:
             logger.warn(f"Accessing stream not successful. Response: {response.json()}")
@@ -50,10 +102,15 @@ class Stream(object):
             resume_token = response.json()["resume_token"]
 
         logger.info("Stream initiated.")
-        logger.info("Your token:")
-        logger.info(resume_token)
+        logger.info(f"Your token: {resume_token}")
 
         self.resume_token = resume_token
+
+        with open(os.path.join(self.cache_dir, "resume_token.json"), "w") as outfile:
+            json.dump({"resume_token": resume_token}, outfile)
+
+        logger.debug(f"Written resume token to {self.cache_dir}")
+
         return resume_token
 
     @backoff.on_exception(
